@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Glyron — Core Design</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Orbitron:wght@600;800&display=swap');
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background: radial-gradient(ellipse at 50% 40%, #1c0d06 0%, #0d0503 60%, #050201 100%);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  canvas { display:block; touch-action:none; }
+
+  #glyron-title {
+    position:fixed; top:8%; left:50%;
+    transform:translateX(-50%);
+    font-family:'Orbitron', sans-serif;
+    font-weight:800;
+    font-size:clamp(38px, 8vw, 96px);
+    letter-spacing:0.28em;
+    text-indent:0.28em; /* balance the trailing letter-spacing */
+    color:#fff3e0;
+    background:linear-gradient(90deg, #ffd23f 0%, #ff8c1a 50%, #ff2d2d 100%);
+    -webkit-background-clip:text;
+    background-clip:text;
+    -webkit-text-fill-color:transparent;
+    filter:
+      drop-shadow(0 0 14px rgba(255,140,26,0.6))
+      drop-shadow(0 0 34px rgba(255,45,45,0.4));
+    pointer-events:none; user-select:none;
+    text-align:center;
+    animation: glyronPulse 4.5s ease-in-out infinite;
+  }
+  @keyframes glyronPulse {
+    0%, 100% { filter:
+      drop-shadow(0 0 14px rgba(255,140,26,0.6))
+      drop-shadow(0 0 34px rgba(255,45,45,0.4)); }
+    50% { filter:
+      drop-shadow(0 0 24px rgba(255,210,63,0.9))
+      drop-shadow(0 0 52px rgba(255,45,45,0.55)); }
+  }
+
+  #hud {
+    position:fixed; left:22px; bottom:20px;
+    color:#ffb15e; opacity:0.75;
+    font-size:11px; letter-spacing:0.12em;
+    line-height:1.7; text-transform:uppercase;
+    pointer-events:none; user-select:none;
+  }
+  #hud .title { color:#ffd23f; font-size:13px; letter-spacing:0.2em; opacity:0.95; }
+  #hud .dim { opacity:0.55; }
+
+  #corner {
+    position:fixed; top:20px; right:24px;
+    color:#ff8c1a; opacity:0.55; font-size:10px;
+    letter-spacing:0.18em; text-transform:uppercase;
+    pointer-events:none; user-select:none; text-align:right; line-height:1.6;
+  }
+
+  #frame {
+    position:fixed; inset:14px; pointer-events:none;
+    border:1px solid rgba(255,140,60,0.12);
+  }
+  #frame::before, #frame::after {
+    content:''; position:absolute; width:14px; height:14px;
+    border-color:#ff8c1a; opacity:0.5;
+  }
+
+  #cam-panel {
+    position:fixed; right:22px; bottom:20px;
+    width:200px; height:150px;
+    border:1px solid rgba(255,140,60,0.4);
+    border-radius:4px;
+    overflow:hidden;
+    background:#0a0402;
+    box-shadow:0 0 24px rgba(255,90,20,0.25);
+  }
+  #cam-canvas { width:100%; height:100%; display:block; transform:scaleX(-1); }
+  #cam-label {
+    position:fixed; right:22px; bottom:174px;
+    color:#ff8c1a; opacity:0.6; font-size:10px;
+    letter-spacing:0.18em; text-transform:uppercase;
+    font-family:'JetBrains Mono', monospace;
+    pointer-events:none; user-select:none;
+  }
+
+  #enable-cam {
+    position:fixed; right:22px; bottom:20px;
+    width:200px; height:150px;
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:8px;
+    background:rgba(20,8,4,0.9);
+    border:1px solid rgba(255,140,60,0.5);
+    border-radius:4px;
+    color:#ffb15e; font-family:'JetBrains Mono', monospace;
+    font-size:11px; letter-spacing:0.1em; text-transform:uppercase;
+    cursor:pointer; text-align:center; padding:12px;
+  }
+  #air-canvas-container {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  display: none;
+  z-index: 100;
+  overflow: hidden;
+}
+
+#cam-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  z-index: 1;
+}
+
+#air-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+#back-to-glyron {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 3;
+}
+
+  
+
+  #enable-cam:hover { background:rgba(40,16,6,0.95); border-color:#ff8c1a; }
+  #enable-cam .icon { font-size:22px; }
+</style>
+</head>
+<body>
+
+<div id="frame"></div>
+<div id="glyron-title">GLYRON</div>
+<div id="hud">
+  <div class="dim">welcome users</div>
+  <div style="margin-top:6px">hand left/right — rotate</div>
+  <div>hand up/down — move</div>
+  <div>pinch fingers — zoom</div>
+  <div>make a fist — ignite burst</div>
+</div>
+<div id="corner">
+  status: <span id="status-text">idle-drift</span><br>
+  gesture link: <span id="link-text">not connected</span>
+</div>
+
+<div id="cam-label">hand tracking feed</div>
+<div id="cam-panel"><canvas id="cam-canvas"></canvas></div>
+<div id="air-canvas-container">
+   <video id="cam-video" playsinline autoplay></video>
+   <canvas id="air-canvas"></canvas>
+   <button id="back-to-glyron">← Back to Glyron</button>
+</div>
+<button id="air-canvas-btn">AIR CANVAS</button>
+<button id="enable-cam">
+  <span class="icon">◎</span>
+  <span>enable camera<br>for gesture control</span>
+</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script>
+(function(){
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 6.4);
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // ---------- lighting ----------
+  scene.add(new THREE.AmbientLight(0x2a0f05, 1.2));
+  const lightA = new THREE.PointLight(0xffb347, 3.2, 14);
+  lightA.position.set(3, 2, 4);
+  scene.add(lightA);
+  const lightB = new THREE.PointLight(0xff3b1f, 2.6, 14);
+  lightB.position.set(-3, -2, 3);
+  scene.add(lightB);
+  const lightC = new THREE.PointLight(0xffe14d, 1.4, 10);
+  lightC.position.set(0, -3, -3);
+  scene.add(lightC);
+
+  // ---------- Glyron core geometry (custom crystalline form) ----------
+  const group = new THREE.Group();
+  scene.add(group);
+
+  function hash(x, y, z) {
+    return Math.sin(x*12.9898 + y*78.233 + z*37.719) * 43758.5453 % 1;
+  }
+  function ridge(x, y, z) {
+    // layered sine "noise" — deterministic, gives asymmetric crystalline bumps
+    let n = Math.sin(x*3.1 + y*1.7) * 0.5
+          + Math.cos(y*2.6 + z*3.3) * 0.4
+          + Math.sin(z*4.1 + x*2.2) * 0.35
+          + Math.sin((x+y+z)*5.4) * 0.18;
+    n += (hash(Math.floor(x*4), Math.floor(y*4), Math.floor(z*4)) % 1) * 0.12;
+    return n;
+  }
+
+  const geo = new THREE.IcosahedronGeometry(1.5, 5);
+  geo.computeVertexNormals();
+  const pos = geo.attributes.position;
+  const colors = [];
+  const cYellow = new THREE.Color(0xffe14d);
+  const cOrange = new THREE.Color(0xff7a1a);
+  const cRed = new THREE.Color(0xe6231e);
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const len = Math.sqrt(x*x + y*y + z*z);
+    const nx = x/len, ny = y/len, nz = z/len;
+    const d = ridge(nx*2, ny*2, nz*2) * 0.22;
+    const scale = 1 + d;
+    pos.setXYZ(i, nx*len*scale, ny*len*scale, nz*len*scale);
+
+    const t = (ny + 1) / 2; // vertical gradient: red at base, yellow near top
+    const edge = Math.abs(d) > 0.14 ? 0.5 : 0.0;
+    const col = cRed.clone().lerp(cYellow, t).lerp(cOrange, edge);
+    colors.push(col.r, col.g, col.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+
+  const coreMat = new THREE.MeshPhysicalMaterial({
+    vertexColors: true,
+    metalness: 0.1,
+    roughness: 0.2,
+    transparent: true,
+    opacity: 0.55,
+    transmission: 0.4,
+    thickness: 0.8,
+    emissive: 0x2a0a02,
+    emissiveIntensity: 0.7,
+    flatShading: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const crystal = new THREE.Mesh(geo, coreMat);
+  group.add(crystal);
+
+  // faux-bloom halo: slightly larger, additive, transparent shell
+  const haloMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.14,
+    blending: THREE.AdditiveBlending,
+    side: THREE.BackSide,
+    depthWrite: false,
+  });
+  const halo = new THREE.Mesh(geo.clone(), haloMat);
+  halo.scale.setScalar(1.18);
+  group.add(halo);
+
+  // edge glow wireframe
+  const edges = new THREE.EdgesGeometry(geo, 22);
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0xffb347, transparent:true, opacity:0.2 });
+  const edgeLines = new THREE.LineSegments(edges, edgeMat);
+  group.add(edgeLines);
+
+  // ---------- inner rotating structure ----------
+  const innerGeo = new THREE.IcosahedronGeometry(0.85, 1);
+  const innerMat = new THREE.MeshBasicMaterial({
+    color: 0xffd23f, wireframe:true, transparent:true, opacity:0.5,
+  });
+  const inner = new THREE.Mesh(innerGeo, innerMat);
+  group.add(inner);
+
+  const innerGeo2 = new THREE.OctahedronGeometry(0.55, 0);
+  const innerMat2 = new THREE.MeshBasicMaterial({
+    color: 0xff5722, wireframe:true, transparent:true, opacity:0.6,
+  });
+  const inner2 = new THREE.Mesh(innerGeo2, innerMat2);
+  group.add(inner2);
+
+  // ---------- particle halo ----------
+  const PCOUNT = 900;
+  const pPos = new Float32Array(PCOUNT*3);
+  const pCol = new Float32Array(PCOUNT*3);
+  const pPalette = [cYellow, cOrange, cRed];
+  for (let i=0;i<PCOUNT;i++){
+    const r = 2.1 + Math.random()*1.7;
+    const theta = Math.random()*Math.PI*2;
+    const phi = Math.acos(2*Math.random()-1);
+    const x = r*Math.sin(phi)*Math.cos(theta);
+    const y = r*Math.sin(phi)*Math.sin(theta);
+    const z = r*Math.cos(phi);
+    pPos[i*3]=x; pPos[i*3+1]=y; pPos[i*3+2]=z;
+    const c = pPalette[Math.floor(Math.random()*pPalette.length)];
+    pCol[i*3]=c.r; pCol[i*3+1]=c.g; pCol[i*3+2]=c.b;
+  }
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+  pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+  const pMat = new THREE.PointsMaterial({
+    size: 0.028, vertexColors:true, transparent:true, opacity:0.75,
+    blending: THREE.AdditiveBlending, depthWrite:false,
+  });
+  const particles = new THREE.Points(pGeo, pMat);
+  scene.add(particles);
+
+  // ---------- burst sparks (fired outward on a fist gesture) ----------
+  const SPARKS = 260;
+  const sparkPos = new Float32Array(SPARKS*3);
+  const sparkVel = new Float32Array(SPARKS*3);
+  const sparkLife = new Float32Array(SPARKS);
+  const sparkBase = new Float32Array(SPARKS*3);
+  const sparkColOut = new Float32Array(SPARKS*3);
+  const sparkFirePalette = [new THREE.Color(0xffffff), new THREE.Color(0xffe14d), new THREE.Color(0xff9a1a), new THREE.Color(0xff3b1f)];
+  let sparkPtr = 0;
+
+  const sparkGeo = new THREE.BufferGeometry();
+  sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+  sparkGeo.setAttribute('color', new THREE.BufferAttribute(sparkColOut, 3));
+  const sparkMat = new THREE.PointsMaterial({
+    size: 0.065, vertexColors:true, transparent:true, opacity:1,
+    blending: THREE.AdditiveBlending, depthWrite:false,
+  });
+  const sparks = new THREE.Points(sparkGeo, sparkMat);
+  group.add(sparks); // rides along with the core's rotation/position/scale
+
+  function fireSparks(count){
+    for (let n=0; n<count; n++){
+      const i = sparkPtr = (sparkPtr + 1) % SPARKS;
+      const theta = Math.random()*Math.PI*2;
+      const phi = Math.acos(2*Math.random()-1);
+      const dirx = Math.sin(phi)*Math.cos(theta);
+      const diry = Math.sin(phi)*Math.sin(theta);
+      const dirz = Math.cos(phi);
+      const startR = 1.4 + Math.random()*0.3;
+      sparkPos[i*3] = dirx*startR;
+      sparkPos[i*3+1] = diry*startR;
+      sparkPos[i*3+2] = dirz*startR;
+      const speed = 1.8 + Math.random()*2.6;
+      sparkVel[i*3] = dirx*speed;
+      sparkVel[i*3+1] = diry*speed + 0.6; // slight upward drift, like flame
+      sparkVel[i*3+2] = dirz*speed;
+      sparkLife[i] = 1;
+      const c = sparkFirePalette[Math.floor(Math.random()*sparkFirePalette.length)];
+      sparkBase[i*3]=c.r; sparkBase[i*3+1]=c.g; sparkBase[i*3+2]=c.b;
+    }
+  }
+
+  function updateSparks(dt){
+    for (let i=0; i<SPARKS; i++){
+      if (sparkLife[i] <= 0) continue;
+      sparkLife[i] -= dt*0.6;
+      if (sparkLife[i] < 0) sparkLife[i] = 0;
+      sparkVel[i*3+1] -= dt*0.8; // gravity-ish fall
+      sparkPos[i*3]   += sparkVel[i*3]*dt;
+      sparkPos[i*3+1] += sparkVel[i*3+1]*dt;
+      sparkPos[i*3+2] += sparkVel[i*3+2]*dt;
+      sparkVel[i*3]   *= 0.97;
+      sparkVel[i*3+1] *= 0.97;
+      sparkVel[i*3+2] *= 0.97;
+      const l = sparkLife[i];
+      sparkColOut[i*3]   = sparkBase[i*3]   * l;
+      sparkColOut[i*3+1] = sparkBase[i*3+1] * l;
+      sparkColOut[i*3+2] = sparkBase[i*3+2] * l;
+    }
+    sparkGeo.attributes.position.needsUpdate = true;
+    sparkGeo.attributes.color.needsUpdate = true;
+  }
+
+  // ---------- rings ----------
+  function makeRing(innerR, outerR, color, opacity, seed){
+    const g = new THREE.RingGeometry(innerR, outerR, 220, 1);
+    const posAttr = g.attributes.position;
+    const cols = [];
+    const alphas = [];
+    const c = new THREE.Color(color);
+    for (let i=0; i<posAttr.count; i++){
+      const x = posAttr.getX(i), y = posAttr.getY(i);
+      const r = Math.sqrt(x*x + y*y);
+      const ang = Math.atan2(y, x);
+      const t = (r - innerR) / (outerR - innerR);
+      const fade = 1 - Math.abs(t - 0.5) * 2;
+      // fine angular striations, like Cassini divisions / dust lanes
+      const striation = 0.65 + 0.35 * Math.sin(ang*26 + seed*4) * Math.sin(ang*7 - seed);
+      cols.push(c.r, c.g, c.b);
+      alphas.push((0.12 + fade*0.65) * striation);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    g.setAttribute('alpha', new THREE.Float32BufferAttribute(alphas, 1));
+
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: { uOpacity: { value: opacity }, uTime: { value: 0 } },
+      vertexShader: `
+        attribute float alpha;
+        varying float vAlpha;
+        varying vec3 vColor;
+        void main(){
+          vAlpha = alpha;
+          vColor = color;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying float vAlpha;
+        varying vec3 vColor;
+        uniform float uOpacity;
+        uniform float uTime;
+        void main(){
+          float shimmer = 0.85 + 0.15 * sin(uTime*1.4 + vColor.r*10.0);
+          gl_FragColor = vec4(vColor * shimmer, vAlpha * uOpacity);
+        }
+      `,
+      vertexColors: true,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+
+    // soft outer bloom shell for the same ring
+    const glowG = new THREE.RingGeometry(innerR*0.94, outerR*1.12, 160, 1);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color, transparent:true, opacity: opacity*0.16,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite:false,
+    });
+    const glowMesh = new THREE.Mesh(glowG, glowMat);
+    mesh.add(glowMesh);
+
+    // fine dust particles hugging the band
+    const DUST = 140;
+    const dp = new Float32Array(DUST*3);
+    const dc = new Float32Array(DUST*3);
+    for(let i=0;i<DUST;i++){
+      const rr = innerR + Math.random()*(outerR-innerR);
+      const aa = Math.random()*Math.PI*2;
+      dp[i*3] = Math.cos(aa)*rr;
+      dp[i*3+1] = Math.sin(aa)*rr;
+      dp[i*3+2] = (Math.random()-0.5)*0.04;
+      dc[i*3]=c.r; dc[i*3+1]=c.g; dc[i*3+2]=c.b;
+    }
+    const dGeo = new THREE.BufferGeometry();
+    dGeo.setAttribute('position', new THREE.BufferAttribute(dp,3));
+    dGeo.setAttribute('color', new THREE.BufferAttribute(dc,3));
+    const dMat = new THREE.PointsMaterial({
+      size:0.02, vertexColors:true, transparent:true, opacity:0.85,
+      blending:THREE.AdditiveBlending, depthWrite:false,
+    });
+    mesh.add(new THREE.Points(dGeo, dMat));
+
+    mesh.userData.material = mat;
+    return mesh;
+  }
+
+  const ringGroup = new THREE.Group();
+  scene.add(ringGroup);
+
+  // independent axes — each ring tilted on its own plane
+  const ring1 = makeRing(2.25, 2.5, 0xffe14d, 0.85, 0.4);
+  ring1.rotation.x = Math.PI/2 + 0.35;
+  ring1.rotation.y = 0.15;
+  ringGroup.add(ring1);
+
+  const ring2 = makeRing(2.62, 2.82, 0xff7a1a, 0.7, 1.7);
+  ring2.rotation.x = Math.PI/2 - 0.5;
+  ring2.rotation.z = 0.55;
+  ringGroup.add(ring2);
+
+  const ring3 = makeRing(2.98, 3.12, 0xe6231e, 0.6, 2.9);
+  ring3.rotation.x = Math.PI/2 + 0.1;
+  ring3.rotation.y = -0.7;
+  ring3.rotation.z = 0.3;
+  ringGroup.add(ring3);
+
+  // ---------- interaction: drag to rotate, wheel/pinch to zoom (scales Glyron's core only) ----------
+  let dragging = false, lastX=0, lastY=0;
+  let rotY = 0.4, rotX = 0.25;
+  let targetRotY = rotY, targetRotX = rotX;
+  let coreScale = 1, targetScale = 1;
+  const minScale=0.55, maxScale=1.9;
+  let posY = 0, targetPosY = 0;
+  const maxPosY = 1.3;
+  let burst = 0; // 0..1, spikes on a fist gesture then decays
+  let handActive = false;
+
+  function onDown(x,y){ dragging=true; lastX=x; lastY=y; }
+  function onMove(x,y){
+    if(!dragging) return;
+    const dx = x-lastX, dy = y-lastY;
+    targetRotY += dx*0.006;
+    targetRotX += dy*0.006;
+    targetRotX = Math.max(-1.1, Math.min(1.1, targetRotX));
+    lastX=x; lastY=y;
+  }
+  function onUp(){ dragging=false; }
+
+  renderer.domElement.addEventListener('mousedown', e=>onDown(e.clientX,e.clientY));
+  window.addEventListener('mousemove', e=>onMove(e.clientX,e.clientY));
+  window.addEventListener('mouseup', onUp);
+
+  renderer.domElement.addEventListener('wheel', e=>{
+    targetScale -= e.deltaY*0.0016;
+    targetScale = Math.max(minScale, Math.min(maxScale, targetScale));
+    e.preventDefault();
+  }, {passive:false});
+
+  let pinchDist = null;
+  renderer.domElement.addEventListener('touchstart', e=>{
+    if(e.touches.length===1){ onDown(e.touches[0].clientX, e.touches[0].clientY); }
+    else if(e.touches.length===2){
+      pinchDist = dist(e.touches[0], e.touches[1]);
+    }
+  }, {passive:true});
+  renderer.domElement.addEventListener('touchmove', e=>{
+    if(e.touches.length===1){ onMove(e.touches[0].clientX, e.touches[0].clientY); }
+    else if(e.touches.length===2){
+      const d = dist(e.touches[0], e.touches[1]);
+      if(pinchDist){
+        targetScale += (d-pinchDist)*0.0035;
+        targetScale = Math.max(minScale, Math.min(maxScale, targetScale));
+      }
+      pinchDist = d;
+    }
+    e.preventDefault();
+  }, {passive:false});
+  renderer.domElement.addEventListener('touchend', ()=>{ dragging=false; pinchDist=null; });
+  function dist(a,b){ const dx=a.clientX-b.clientX, dy=a.clientY-b.clientY; return Math.sqrt(dx*dx+dy*dy); }
+
+  // test shortcut: press space to trigger the ignite burst without a camera
+  window.addEventListener('keydown', e=>{
+    if (e.code === 'Space'){
+      burst = 1;
+      fireSparks(70);
+      e.preventDefault();
+    }
+  });
+
+  // ---------- animation loop ----------
+  let t = 0;
+  function animate(){
+    requestAnimationFrame(animate);
+    t += 0.01;
+
+    if(!dragging && !handActive){
+      targetRotY += 0.0016; // idle auto-drift, paused while hand or mouse is controlling
+    }
+    rotY += (targetRotY-rotY)*0.08;
+    rotX += (targetRotX-rotX)*0.08;
+    coreScale += (targetScale-coreScale)*0.1;
+    posY += (targetPosY-posY)*0.09;
+    burst *= 0.95;
+    updateSparks(0.032);
+
+    group.rotation.y = rotY;
+    group.rotation.x = rotX;
+    group.position.y = posY;
+    group.scale.setScalar(coreScale * (1 + Math.sin(t*0.8)*0.01) * (1 + burst*0.16));
+    ringGroup.rotation.y = rotY;
+    ringGroup.rotation.x = rotX;
+    ringGroup.position.y = posY;
+    ringGroup.scale.setScalar(coreScale);
+    ring1.rotation.z += 0.0035 + burst*0.02;
+    ring2.rotation.z -= 0.0022 + burst*0.015;
+    ring3.rotation.z += 0.0014 + burst*0.012;
+    ring1.userData.material.uniforms.uTime.value = t;
+    ring2.userData.material.uniforms.uTime.value = t;
+    ring3.userData.material.uniforms.uTime.value = t;
+    ring1.userData.material.uniforms.uOpacity.value = 0.85 * (1 + burst*1.1);
+    ring2.userData.material.uniforms.uOpacity.value = 0.7 * (1 + burst*1.1);
+    ring3.userData.material.uniforms.uOpacity.value = 0.6 * (1 + burst*1.1);
+    inner.rotation.y -= 0.012;
+    inner.rotation.x += 0.007;
+    inner2.rotation.y += 0.018;
+    inner2.rotation.z -= 0.01;
+
+    particles.rotation.y += 0.0009;
+    particles.rotation.x = Math.sin(t*0.15)*0.08;
+    pMat.size = 0.028 + burst*0.09;
+    pMat.opacity = Math.min(1, 0.75 + burst*0.3);
+
+    coreMat.emissiveIntensity = 0.7 + burst*3.4;
+
+    lightA.position.x = Math.sin(t*0.4)*4;
+    lightB.position.x = -Math.sin(t*0.3)*4;
+    lightA.intensity = 3.2 + burst*5;
+    lightC.intensity = 1.4 + burst*4;
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ---------- phase 2: MediaPipe hand-gesture control ----------
+  const statusText = document.getElementById('status-text');
+  const linkText = document.getElementById('link-text');
+  const enableBtn = document.getElementById('enable-cam');
+  const videoEl = document.getElementById('cam-video');
+  const airCamera = document.getElementById('air-camera');
+  const camCanvas = document.getElementById('cam-canvas');
+  const camCtx = camCanvas.getContext('2d');
+  const airCanvasContainer =
+  document.getElementById('air-canvas-container');
+
+  const airCanvas =document.getElementById('air-canvas');
+
+  const airCtx =airCanvas.getContext('2d');
+
+  const backToGlyron =document.getElementById('back-to-glyron');
+  
+  camCanvas.width = 320; camCanvas.height = 240;
+  function resizeAirCanvas() {
+    airCanvas.width = window.innerWidth;
+    airCanvas.height = window.innerHeight;
+   }
+  resizeAirCanvas();
+  const airCanvasBtn = document.getElementById('air-canvas-btn');
+  airCanvasBtn.addEventListener('click', () => {
+  airCanvasContainer.style.display = 'block';
+
+  airCamera.srcObject = camVideo.srcObject;
+  airCamera.play();
+  });
+  backToGlyron.addEventListener('click', () => {
+  airCanvasContainer.style.display = 'none';});
+  
+
+  let prevPalmX = null;
+  let noHandFrames = 0;
+  let wasFist = false;
+  let fistCooldown = 0;
+
+  function landmarkAvg(lm, idxs){
+    let x=0,y=0;
+    idxs.forEach(i=>{ x+=lm[i].x; y+=lm[i].y; });
+    return { x: x/idxs.length, y: y/idxs.length };
+  }
+  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy); }
+  function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+  let previousX = null;
+  let previousY = null;
+
+   
+
+function drawAirLine(x, y) {
+
+  const smooth = 0.35;
+
+  if (previousX === null || previousY === null) {
+    previousX = x;
+    previousY = y;
+    return;
+  }
+
+  const smoothX = previousX + (x - previousX) * smooth;
+  const smoothY = previousY + (y - previousY) * smooth;
+
+  airCtx.beginPath();
+  airCtx.moveTo(previousX, previousY);
+  airCtx.lineTo(smoothX, smoothY);
+
+  airCtx.strokeStyle = '#ff8c1a';
+  airCtx.lineWidth = 6;
+  airCtx.lineCap = 'round';
+  airCtx.lineJoin = 'round';
+  airCtx.stroke();
+
+  previousX = smoothX;
+  previousY = smoothY;
+}
+function isIndexPointing(lm) {
+    const indexUp = lm[8].y < lm[6].y;
+
+    const middleDown = lm[12].y > lm[10].y;
+    const ringDown = lm[16].y > lm[14].y;
+    const pinkyDown = lm[20].y > lm[18].y;
+    return indexUp && middleDown && ringDown && pinkyDown;
+    }
+
+function onResults(results){
+    camCtx.save();
+    camCtx.clearRect(0,0,camCanvas.width,camCanvas.height);
+    camCtx.drawImage(results.image, 0, 0, camCanvas.width, camCanvas.height);
+
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+      const lm = results.multiHandLandmarks[0];
+      // Index finger tip
+      const indexTip = lm[8];
+
+      // Convert MediaPipe position to Air Canvas position
+      const x = (1 - indexTip.x) * airCanvas.width;
+      const y = indexTip.y * airCanvas.height;
+      if (isIndexPointing(lm)) {
+        drawAirLine(x, y);
+      } else {
+        previousX = null;
+        previousY = null;
+      }
+      
+  
+    
+      if (airCanvasContainer.style.display !== 'block') {
+      noHandFrames = 0;
+      handActive = true;
+      statusText.textContent = 'tracking hand';
+
+      if (window.drawConnectors) {
+        drawConnectors(camCtx, lm, HAND_CONNECTIONS, { color:'#ff8c1a', lineWidth:2 });
+        drawLandmarks(camCtx, lm, { color:'#ffe14d', lineWidth:1, radius:2.5 });
+      }
+
+      // mirrored palm center (video is displayed mirrored via CSS)
+      const palm = landmarkAvg(lm, [0,5,9,13,17]);
+      const palmX = 1 - palm.x;
+      const palmY = palm.y;
+
+      // horizontal movement -> continuous rotation (like spinning it with your hand)
+      if (prevPalmX !== null) {
+        const dx = palmX - prevPalmX;
+        targetRotY += dx * 4.2;
+      }
+      prevPalmX = palmX;
+
+      // vertical hand height -> move Glyron up/down
+      targetPosY = clamp((0.5 - palmY) * 2.6, -maxPosY, maxPosY);
+
+      // pinch distance (thumb tip vs index tip), normalized by hand size -> zoom
+      const handSize = dist2(lm[0], lm[9]) || 0.001;
+      const pinch = dist2(lm[4], lm[8]) / handSize;
+      const pinchT = clamp((pinch - 0.3) / (1.4 - 0.3), 0, 1);
+      targetScale = minScale + pinchT * (maxScale - minScale);
+
+      // fist detection -> ignite burst effect (edge-triggered, with cooldown)
+      const curled = [[8,6],[12,10],[16,14],[20,18]]
+        .filter(([tip,pip]) => lm[tip].y > lm[pip].y).length;
+      const isFist = curled >= 4;
+      fistCooldown = Math.max(0, fistCooldown - 1);
+      if (isFist && !wasFist && fistCooldown === 0) {
+        burst = 1;
+        fistCooldown = 40;
+        fireSparks(70);
+      }
+      wasFist = isFist;
+    }
+
+    } else {
+        prevPalmX = null;
+        noHandFrames++;
+        if (noHandFrames > 20) {
+          handActive = false;
+          statusText.textContent = 'no hand detected';
+        }
+      }
+    camCtx.restore();
+  }
+
+  let handsModel = null;
+  let mpCamera = null;
+
+  enableBtn.addEventListener('click', async () => {
+    enableBtn.textContent = '';
+    enableBtn.style.display = 'none';
+    linkText.textContent = 'requesting camera…';
+    try {
+      handsModel = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+      handsModel.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6,
+      });
+      handsModel.onResults(onResults);
+
+      mpCamera = new Camera(videoEl, {
+        onFrame: async () => { await handsModel.send({ image: videoEl }); },
+        width: 320,
+        height: 240,
+      });
+      await mpCamera.start();
+      linkText.textContent = 'connected';
+    } catch (err) {
+      linkText.textContent = 'camera unavailable';
+      statusText.textContent = 'permission denied or no camera';
+      enableBtn.style.display = 'flex';
+      enableBtn.innerHTML = '<span class="icon">⚠</span><span>camera blocked — check<br>browser permissions</span>';
+      console.error('Glyron camera error:', err);
+    }
+  });
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+})();
+</script>
+</body>
+</html>
